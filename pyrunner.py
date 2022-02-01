@@ -20,7 +20,7 @@ intro = ['',
          '',
          '--------------------------------------------------------------------',
          '',
-         'VERSION 1.03 ',
+         'VERSION 1.03',
          '',
          '--------------------------------------------------------------------',
          ]
@@ -185,24 +185,25 @@ def start_check_replication(buffer1):
     print('\nВыполнено')
 
 
-def copy_file(file_path, file_name, dist_path, buffer1):
+def copy_file(file_path, file_name, dist_path, ip):
     file_path = os.path.join(file_path, file_name)
-    for i in buffer1:
-        try:
-            path_ = r'\\{}'.format(i)
-            distination_path = os.path.join(path_, dist_path)
-            if os.path.exists(distination_path):
-                distination_path_ = os.path.join(distination_path, file_name)
-                shutil.copy2(file_path, distination_path_)
-                print(Fore.GREEN, 'Копирование завершено успешно {}'.format(i))
-            else:
-                os.mkdir(distination_path)
-                distination_path_ = os.path.join(distination_path, file_name)
-                shutil.copy2(file_path, distination_path_)
-                print(Fore.GREEN, 'Была создана директория и копирование завершено успешно {}'.format(i))
-                #print(Fore.RED, 'Distination directory not defined')
-        except Exception as error:
-            print(Fore.RED, error)
+    try:
+        path_ = r'\\{}'.format(ip)
+        distination_path = os.path.join(path_, dist_path)
+        if os.path.exists(distination_path):
+            distination_path_ = os.path.join(distination_path, file_name)
+            shutil.copy2(file_path, distination_path_)
+            print(Fore.GREEN, 'Копирование завершено успешно {}'.format(ip))
+            time.sleep(0.1)
+        else:
+            os.mkdir(distination_path)
+            distination_path_ = os.path.join(distination_path, file_name)
+            shutil.copy2(file_path, distination_path_)
+            print(Fore.GREEN, 'Была создана новая директория и копирование завершено успешно {}'.format(ip))
+            time.sleep(0.1)
+            #print(Fore.RED, 'Distination directory not defined')
+    except Exception as error:
+        print(Fore.RED, error)
 
 
 def copy_folder(dir_path, dist_path, ip):
@@ -255,12 +256,12 @@ def read_logs(file, coding=None):
 def check_date_logs_txt(path):
     try:
         file_time = dt.datetime.fromtimestamp(os.path.getmtime(path))
-        print(Fore.YELLOW, 'Лог .txt был изменен : {}'.format(file_time.strftime("%d-%m-%Y AT %H:%M")))
-        print(Fore.WHITE, '------------------------------------------------------------------------------')
+        print(Fore.MAGENTA, 'Лог .txt был изменен : {}'.format(file_time.strftime("%d-%m-%Y AT %H:%M")))
+        print(Fore.WHITE, '------------------------------------------------------------------------')
 
     except Exception as error:
         print(Fore.RED, error)
-        print(Fore.WHITE, '------------------------------------------------------------------------------')
+        print(Fore.WHITE, '------------------------------------------------------------------------')
 
 
 def check_logs_backup(buffer1, buffer2):
@@ -280,7 +281,7 @@ def check_logs_backup(buffer1, buffer2):
             if file_size > 0:
                 print(Fore.RED, 'В логе бэкапа есть ошибки на : {}'.format(file))
                 read_logs(file)
-                print(Fore.WHITE, '------------------------------------------------------------------------------')
+                print(Fore.WHITE, '------------------------------------------------------------------------')
             else:
                 print(Fore.GREEN, 'В логе бэкапа ошибок нет на : {}'.format(file))
                 check_date_logs_txt(file)
@@ -297,11 +298,11 @@ def check_logs_backup(buffer1, buffer2):
             if file_size_a > 0:
                 print(Fore.RED, 'В логе бэкапа есть ошибки на : {}'.format(file_a))
                 read_logs(file_a)
-                print(Fore.WHITE, '------------------------------------------------------------------------------')
+                print(Fore.WHITE, '------------------------------------------------------------------------')
             elif file_size_b > 0:
                 print(Fore.RED, 'В логе бэкапа есть ошибки на : {}'.format(file_b))
                 read_logs(file_b)
-                print(Fore.WHITE, '------------------------------------------------------------------------------')
+                print(Fore.WHITE, '------------------------------------------------------------------------')
             else:
                 print(Fore.GREEN, 'В логе бэкапа ошибок нет на : {}'.format(file_a))
                 check_date_logs_txt(file_a)
@@ -316,7 +317,7 @@ def check_logs_backup(buffer1, buffer2):
             if file_size > 0:
                 print(Fore.RED, 'В логе бэкапа есть ошибки на : {}'.format(i))
                 read_logs(i)
-                print(Fore.WHITE, '------------------------------------------------------------------------------')
+                print(Fore.WHITE, '------------------------------------------------------------------------')
             else:
                 print(Fore.GREEN, 'В логе бэкапа ошибок нет на : {}'.format(i))
                 check_date_logs_txt(i)
@@ -348,18 +349,18 @@ def start():
             g.clear_buffers()
             g.generate_all()
             print(Style.RESET_ALL)
-            command = input('\n\nInput help or input command copyf/copyd/logs/backup/date/repl >>> ')
+            command = input('\n\nInput help or input command copyf/copyd/logs/backup/date/repl # ')
             if command == 'help':
                 print(Fore.GREEN, help_outro)
             elif command == 'logs':
-                wp = input('Выбрать место server/router >>> ')
+                wp = input('Выбрать место server/router # ')
                 if wp == 'server':
                     check_logs_backup(g.servers_buffer, g.servers_alfamed)
                 if wp == 'router':
                     check_logs_backup(g.routers_buffer, g.routers_alfamed)
             elif command == 'backup':
                 pool = Pool(g.pool_size)
-                wp = input('Выбрать место server/router >>> ')
+                wp = input('Выбрать место server/router # ')
                 if wp == 'server':
                     servers_ip = g.servers_buffer + g.servers_alfamed
                     for i in servers_ip:
@@ -374,7 +375,7 @@ def start():
                     pool.close()
                     pool.join()
             elif command == 'date':
-                wp = input('Выбрать место server/router >>> ')
+                wp = input('Выбрать место server/router # ')
                 if wp == 'server':
                     check_date_rptk(g.servers_buffer, g.servers_alfamed)
                 if wp == 'router':
@@ -387,27 +388,61 @@ def start():
                 start_check_replication(repl_list)
             elif command == 'copyf':
                 g.clear_buffers()
-                wp = input('Выбрать место server/router/server_alf/router_alf >>> '); start = int(input('Начало : аптека(1-80)/альфамед(101-110) >>> '))
-                end = int(input('Конец : аптека(1-80)/альфамед(101-110) >>> ')); file_path = input('Директория копируемого файла >>> ')
-                file_name = input('Имя файла >>> '); dist_path = input(r'Директория назначения без первого слэша например: Scripts\bat >>> ')
+                pool = Pool(g.pool_size)
+                wp = input('Выбрать место server/router/server_alf/router_alf/range # ')
+                start = int(input('Введите начало диапазона : аптека(1-80)/альфамед(101-110) или введите 0 если используете range # '))
+                end = int(input('Введите конец диапазона : аптека(1-80)/альфамед(101-110) или введите 0 если используете range # '))
+                file_path = input('Директория копируемого файла # '); file_name = input('Имя файла # '); dist_path = input(r'Директория назначения без первого слэша например: Scripts\bat # ')
                 if wp == 'server':
                     g.gen_ip_list(start, end)
-                    copy_file(file_path, file_name, dist_path, g.servers_buffer)
+                    for i in g.servers_buffer:
+                        pool.apply_async(copy_file, (file_path, file_name, dist_path, i, ))
+                    pool.close()
+                    pool.join()
                 if wp == 'router':
                     g.gen_ip_list(start, end)
-                    copy_file(file_path, file_name, dist_path, g.routers_buffer)
+                    for i in g.routers_buffer:
+                        pool.apply_async(copy_file, (file_path, file_name, dist_path, i,))
+                    pool.close()
+                    pool.join()
                 if wp == 'server_alf':
                     g.gen_alf_ip_list(start, end)
-                    copy_file(file_path, file_name, dist_path, g.servers_alfamed)
+                    for i in g.servers_alfamed:
+                        pool.apply_async(copy_file, (file_path, file_name, dist_path, i,))
+                    pool.close()
+                    pool.join()
                 if wp == 'router_alf':
                     g.gen_alf_ip_list(start, end)
-                    copy_file(file_path, file_name, dist_path, g.routers_alfamed)
+                    for i in g.routers_alfamed:
+                        pool.apply_async(copy_file, (file_path, file_name, dist_path, i,))
+                    pool.close()
+                    pool.join()
+                if wp == 'range':
+                    rg = input('Указать аптеки/альфамеды через пробел # ')
+                    wh = input('Ввести 1, если сервер и 0 если роутер # ')
+                    for i in rg.split(' '):
+                        if i != '' and i != ' ':
+                            ip_s = '192.168.{}.51'.format(i)
+                            ip_r = '192.168.{}.50'.format(i)
+                            g.servers_buffer.append(ip_s)
+                            g.routers_buffer.append(ip_r)
+                    if int(wh) == 1:
+                        for s in g.servers_buffer:
+                            pool.apply_async(copy_file, (file_path, file_name, dist_path, s, ))
+                        pool.close()
+                        pool.join()
+                    elif int(wh) == 0:
+                        for r in g.routers_buffer:
+                            pool.apply_async(copy_file, (file_path, file_name, dist_path, r, ))
+                        pool.close()
+                        pool.join()
             elif command == 'copyd':
                 g.clear_buffers()
                 pool = Pool(g.pool_size)
-                wp = input('Выбрать место server/router/server_alf/router_alf >>> '); start = int(input('Начало : аптека(1-80)/альфамед(101-110) >>> '))
-                end = int(input('Конец : аптека(1-80)/альфамед(101-110) >>> ')); file_path = input('Директория копирования >>> ')
-                dist_path = input(r'Директория назначения : Scripts\RPTK_release, если директория не существует, она будет создана >>> ')
+                wp = input('Выбрать место server/router/server_alf/router_alf/range # ')
+                start = int(input('Введите начало диапазона : аптека(1-80)/альфамед(101-110) или введите 0 если используете range # '))
+                end = int(input('Введите конец диапазона : аптека(1-80)/альфамед(101-110) или введите 0 если используете range # '))
+                file_path = input('Директория копирования # '); dist_path = input(r'Директория назначения : Scripts\RPTK_release, если директория не существует, она будет создана # ')
                 if wp == 'server':
                     g.gen_ip_list(start, end)
                     for i in g.servers_buffer:
@@ -432,13 +467,32 @@ def start():
                         pool.apply_async(copy_folder, (file_path, dist_path, i, ))
                     pool.close()
                     pool.join()
+                if wp == 'range':
+                    rg = input('Указать аптеки/альфамеды через пробел # ')
+                    wh = input('Ввести 1, если сервер и 0 если роутер # ')
+                    for i in rg.split(' '):
+                        if i != '' and i != ' ':
+                            ip_s = '192.168.{}.51'.format(i)
+                            ip_r = '192.168.{}.50'.format(i)
+                            g.servers_buffer.append(ip_s)
+                            g.routers_buffer.append(ip_r)
+                    if int(wh) == 1:
+                        for i in g.servers_buffer:
+                            pool.apply_async(copy_folder, (file_path, dist_path, i, ))
+                        pool.close()
+                        pool.join()
+                    elif int(wh) == 0:
+                        for i in g.routers_buffer:
+                            pool.apply_async(copy_folder, (file_path, dist_path, i, ))
+                        pool.close()
+                        pool.join()
             #elif command == 'pgagent':
                 #start_check_pgagent()
             else:
                 print(Fore.RED, 'Команда не найдена')
     except KeyboardInterrupt:
         print('\n')
-        print(Fore.CYAN, 'Успешный выход')
+        print(Fore.CYAN, 'Выход из программы ...')
         exit()
     except Exception as error:
         print(Fore.RED, error)
