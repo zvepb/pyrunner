@@ -1,4 +1,4 @@
-#zv#
+# zv
 import os
 import time
 import shutil
@@ -64,8 +64,7 @@ class Generator:
                         router_ip = '192.168.{}.50'.format(i)
                         self.servers_buffer.append(server_ip)
                         self.routers_buffer.append(router_ip)
-                return self.servers_buffer
-                return self.routers_buffer
+                return self.servers_buffer, self.servers_buffer
 
     def gen_alf_ip_list(self, start=None, end=None):
         if not start or not end:
@@ -88,8 +87,7 @@ class Generator:
                             router_ip = '192.168.{}.50'.format(i)
                             self.servers_alfamed.append(server_ip)
                             self.routers_alfamed.append(router_ip)
-                return self.servers_alfamed
-                return self.routers_alfamed
+                return self.servers_alfamed, self.routers_alfamed
 
     def gen_db_name(self, start=None, end=None):
         if not start or not end:
@@ -130,18 +128,11 @@ class Generator:
                 return self.database_alfamed
 
     def generate_all(self):
-        self.gen_ip_list()
-        self.gen_alf_ip_list()
-        self.gen_db_name()
-        self.gen_alf_db_name()
+        self.gen_ip_list(), self.gen_alf_ip_list(), self.gen_db_name(), self.gen_alf_db_name()
 
     def clear_buffers(self):
-        self.servers_buffer.clear()
-        self.routers_buffer.clear()
-        self.servers_alfamed.clear()
-        self.routers_alfamed.clear()
-        self.database_servers.clear()
-        self.database_alfamed.clear()
+        self.servers_buffer.clear(), self.routers_buffer.clear(), self.servers_alfamed.clear()
+        self.routers_alfamed.clear(), self.database_servers.clear(), self.database_alfamed.clear()
 
 
 def print_intro():
@@ -173,7 +164,7 @@ def execute_query_repl(connection, db_name):
         if not result:
             print(Fore.RED, db_name + ' репликация остановлена')
         for i in result:
-            print(Fore.YELLOW, ' Слейв ' + i[4] + ' в статусе ' + i[9] + ' на мастере ' + db_name)
+            print(Fore.GREEN, 'Слейв ' + i[4] + ' в статусе ' + i[9] + ' на мастере ' + db_name)
     except Exception as error:
         print(Fore.RED, error)
 
@@ -226,7 +217,7 @@ def check_date_rptk(buffer1, buffer2):
             path_ = r'\\{}'.format(i)
             path__ = os.path.join(path_, path)
             buf = dt.datetime.fromtimestamp(os.path.getmtime(path__))
-            print(Fore.MAGENTA, 'На {} последний релиз РПТК :'.format(i), buf.strftime("%d-%m-%Y AT %H:%M"))
+            print(Fore.YELLOW, 'На {} последний релиз РПТК :'.format(i), buf.strftime("%d-%m-%Y AT %H:%M"))
         except Exception as error:           
             print(Fore.RED, error)
     for i in buffer2:
@@ -235,9 +226,9 @@ def check_date_rptk(buffer1, buffer2):
             path_a = os.path.join(path_, path_a)
             path_b = os.path.join(path_, path_b)
             buf_1 = dt.datetime.fromtimestamp(os.path.getmtime(path_a))
-            print(Fore.MAGENTA, 'На {} последний релиз РПТК :'.format(i), buf_1.strftime("%d-%m-%Y AT %H:%M"))
+            print(Fore.YELLOW, 'На {} последний релиз РПТК :'.format(i), buf_1.strftime("%d-%m-%Y AT %H:%M"))
             buf_2 = dt.datetime.fromtimestamp(os.path.getmtime(path_b))
-            print(Fore.MAGENTA, 'На {} последний релиз РПТК :'.format(i), buf_2.strftime("%d-%m-%Y AT %H:%M"))
+            print(Fore.YELLOW, 'На {} последний релиз РПТК :'.format(i), buf_2.strftime("%d-%m-%Y AT %H:%M"))
         except Exception as error:           
             print(Fore.RED, error)
 
@@ -256,7 +247,7 @@ def read_logs(file, coding=None):
 def check_date_logs_txt(path):
     try:
         file_time = dt.datetime.fromtimestamp(os.path.getmtime(path))
-        print(Fore.MAGENTA, 'Лог .txt был изменен : {}'.format(file_time.strftime("%d-%m-%Y AT %H:%M")))
+        print(' Лог .txt был изменен : {}'.format(file_time.strftime("%d-%m-%Y AT %H:%M")))
         print(Fore.WHITE, '------------------------------------------------------------------------')
 
     except Exception as error:
@@ -338,11 +329,12 @@ def check_data_backup(ip):
             name_last_backup = os.path.basename(last_backup)
             time_file = dt.datetime.fromtimestamp(os.path.getmtime(last_backup))
             print(Fore.CYAN, ip + " Последний бэкап был : %s" % time_file.strftime('%Y-%m-%d AT %H:%M'))
-            time.sleep(0.1)
+            time.sleep(0.2)
     except Exception as error:
         print(Fore.RED, error)
 
 
+# проверить создание одного пула в начале цикла while True
 def start():
     try:
         while True:
