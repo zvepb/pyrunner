@@ -334,7 +334,6 @@ def check_data_backup(ip):
         print(Fore.RED, error)
 
 
-# проверить создание одного пула в начале цикла while True
 def start():
     try:
         while True:
