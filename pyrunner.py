@@ -20,11 +20,7 @@ intro = ['',
          '',
          '--------------------------------------------------------------------',
          '',
-         'VERSION 1.03',
-         '',
-         '--------------------------------------------------------------------',
          ]
-
 
 help_outro = '\n[+]\n\ncopyf - Копировать файл по диапазону аптек/альфамедов\n'\
              'copyd - Копировать папку по диапазону аптек/альфамедов\n'\
@@ -32,6 +28,27 @@ help_outro = '\n[+]\n\ncopyf - Копировать файл по диапазо
              'backup - Проверить дату последнего бэкапа\n'\
              'date - Проверить дату релиза РПТК\n'\
              'repl - Проверить состояние выполнения репликации'
+
+
+profiles = {
+    'path_exe': r'RPTK\Apteka_Main.exe',
+    'path_aexe': r'RPTKa\Apteka_Main.exe',
+    'path_bexe': r'RPTKb\Apteka_Main.exe',
+    'path_log': r'RPTKBackup\RPTKARH\log.txt',
+    'path_alog': r'RPTKBackup\RPTKARH\loga.txt',
+    'path_blog': r'RPTKBackup\RPTKARH\logb.txt',
+    'path_bckp': r'RPTKBackup\RPTKARH',
+}
+
+SQL_QUERY_REPL = """SELECT 
+        client_addr As client, usename AS user, application_name AS name,
+        state, sync_state AS mode,
+        (pg_wal_lsn_diff(pg_current_wal_lsn(),sent_lsn) / 1024)::int as pending,
+        (pg_wal_lsn_diff(sent_lsn,write_lsn) / 1024)::int as write,
+        (pg_wal_lsn_diff(write_lsn,flush_lsn) / 1024)::int as flush,
+        (pg_wal_lsn_diff(flush_lsn,replay_lsn) / 1024)::int as replay,
+        (pg_wal_lsn_diff(pg_current_wal_lsn(),replay_lsn))::int / 1024 as total_lag
+        FROM pg_stat_replication;"""
 
 
 init()
@@ -47,6 +64,14 @@ class Generator:
         self.first_alfamed = 101; self.last_alfamed = 110; self.pool_size = 10
         self.servers_buffer = []; self.routers_buffer = []; self.servers_alfamed = []
         self.routers_alfamed = []; self.database_servers = []; self.database_alfamed = []
+        self.names = {
+            'servers_buffer': [],
+            'routers_buffer': [],
+            'servers_alfamed': [],
+            'routers_alfamed': [],
+            'database_servers': [],
+            'database_alfamed': [],
+            }
         self.closed_alfameds = {107}; self.closed_servers = {57, 65, 66, 71, 76}; bad_conn = {5, 46, 59, 74}
 
     def gen_ip_list(self, start=None, end=None):
@@ -62,9 +87,8 @@ class Generator:
                     if i not in self.closed_servers:
                         server_ip = '192.168.{}.51'.format(i)
                         router_ip = '192.168.{}.50'.format(i)
-                        self.servers_buffer.append(server_ip)
-                        self.routers_buffer.append(router_ip)
-                return self.servers_buffer, self.servers_buffer
+                        self.names['servers_buffer'].append(server_ip)
+                        self.names['routers_buffer'].append(router_ip)
 
     def gen_alf_ip_list(self, start=None, end=None):
         if not start or not end:
@@ -80,14 +104,13 @@ class Generator:
                         if i == 102:
                             server_ip = '10.2.2.2'
                             router_ip = '10.2.2.1'
-                            self.servers_alfamed.append(server_ip)
-                            self.routers_alfamed.append(router_ip)
+                            self.names['servers_alfamed'].append(server_ip)
+                            self.names['routers_alfamed'].append(router_ip)
                         else:
                             server_ip = '192.168.{}.51'.format(i)
                             router_ip = '192.168.{}.50'.format(i)
-                            self.servers_alfamed.append(server_ip)
-                            self.routers_alfamed.append(router_ip)
-                return self.servers_alfamed, self.routers_alfamed
+                            self.names['servers_alfamed'].append(server_ip)
+                            self.names['routers_alfamed'].append(router_ip)
 
     def gen_db_name(self, start=None, end=None):
         if not start or not end:
@@ -103,10 +126,10 @@ class Generator:
                         if i < 10:
                             db_name = 'A0{}'.format(i)
                             self.database_servers.append(db_name)
+                            self.names['database_servers'].append(db_name)
                         else:
                             db_name = 'A{}'.format(i)
-                            self.database_servers.append(db_name)
-                return self.database_servers
+                            self.names['database_servers'].append(db_name)
 
     def gen_alf_db_name(self, start=None, end=None):
         if not start or not end:
@@ -121,18 +144,21 @@ class Generator:
                     if i not in self.closed_alfameds:
                         if i < 110:
                             db_name = 'M0{}a'.format(str(i)[2:3])
-                            self.database_alfamed.append(db_name)
+                            self.names['database_alfamed'].append(db_name)
                         else:
                             db_name = 'M{}a'.format(str(i)[1:3])
-                            self.database_alfamed.append(db_name)
-                return self.database_alfamed
+                            self.names['database_alfamed'].append(db_name)
 
     def generate_all(self):
         self.gen_ip_list(), self.gen_alf_ip_list(), self.gen_db_name(), self.gen_alf_db_name()
 
     def clear_buffers(self):
-        self.servers_buffer.clear(), self.routers_buffer.clear(), self.servers_alfamed.clear()
-        self.routers_alfamed.clear(), self.database_servers.clear(), self.database_alfamed.clear()
+        self.names['servers_buffer'].clear()
+        self.names['routers_buffer'].clear()
+        self.names['servers_alfamed'].clear()
+        self.names['routers_alfamed'].clear()
+        self.names['database_servers'].clear()
+        self.names['database_alfamed'].clear()
 
 
 def print_intro():
@@ -158,18 +184,23 @@ def create_connection(db_name, db_host):
 def execute_query_repl(connection, db_name):
     try:
         cursor = connection.cursor()
-        query = "select * from pg_stat_replication"
-        cursor.execute(query)
+        cursor.execute(SQL_QUERY_REPL)
         result = cursor.fetchall()
         if not result:
             print(Fore.RED, db_name + ' репликация остановлена')
         for i in result:
-            print(Fore.GREEN, 'Слейв ' + i[4] + ' в статусе ' + i[9] + ' на мастере ' + db_name)
+            print(Fore.GREEN, 'Слейв ' + i[0] + ' в статусе ' + i[3] + ' pending = ' + str(i[5]) + ' write = ' + str(i[6]) + ' flush = ' + str(i[7]) + ' replay = ' + str(i[8]) + ' total_lag = ' + str(i[9]))
     except Exception as error:
         print(Fore.RED, error)
 
 
 def start_check_replication(buffer1):
+    print( 'pending - сколько журналов транзакций сгенерировано на мастере но не отправлено на реплику (проблема - сеть)\n'\
+           'write - сколько реплики отправлено но не записано (проблема бывает редко - возможно диски)\n'\
+           'flush - записано но еще не была выполнена команда fsync (то есть синхронизации с диском еще не было, данные могут быть записаны только в оперативную память) (проблема - диски не успевают записывать и проигрывать данные)\n'\
+           'replay - данные сброшены на реплику и выполнен fsync но еще не воспроизведены репликой (см. flush)\n'\
+           'total_lag - общий суммарный лаг\n'
+        )
     for i in buffer1:
         connection = create_connection(i[0], i[1])
         execute_query_repl(connection, i[0])
@@ -209,13 +240,10 @@ def copy_folder(dir_path, dist_path, ip):
 
 
 def check_date_rptk(buffer1, buffer2):
-    path = r'RPTK\Apteka_Main.exe'
-    path_a = r'RPTKa\Apteka_Main.exe'
-    path_b = r'RPTKb\Apteka_Main.exe'
     for i in buffer1:
         try:
             path_ = r'\\{}'.format(i)
-            path__ = os.path.join(path_, path)
+            path__ = os.path.join(path_, profiles['path_exe'])
             buf = dt.datetime.fromtimestamp(os.path.getmtime(path__))
             print(Fore.YELLOW, 'На {} последний релиз РПТК :'.format(i), buf.strftime("%d-%m-%Y AT %H:%M"))
         except Exception as error:           
@@ -223,11 +251,11 @@ def check_date_rptk(buffer1, buffer2):
     for i in buffer2:
         try:
             path_ = r'\\{}'.format(i)
-            path_a = os.path.join(path_, path_a)
-            path_b = os.path.join(path_, path_b)
-            buf_1 = dt.datetime.fromtimestamp(os.path.getmtime(path_a))
+            path_a = os.path.join(path_, profiles['path_exea'])
+            path_b = os.path.join(path_, profiles['path_exeb'])
+            buf_1 = dt.datetime.fromtimestamp(os.path.getmtime(profiles['path_exea']))
             print(Fore.YELLOW, 'На {} последний релиз РПТК :'.format(i), buf_1.strftime("%d-%m-%Y AT %H:%M"))
-            buf_2 = dt.datetime.fromtimestamp(os.path.getmtime(path_b))
+            buf_2 = dt.datetime.fromtimestamp(os.path.getmtime(profiles['path_exeb']))
             print(Fore.YELLOW, 'На {} последний релиз РПТК :'.format(i), buf_2.strftime("%d-%m-%Y AT %H:%M"))
         except Exception as error:           
             print(Fore.RED, error)
@@ -247,7 +275,7 @@ def read_logs(file, coding=None):
 def check_date_logs_txt(path):
     try:
         file_time = dt.datetime.fromtimestamp(os.path.getmtime(path))
-        print(' Лог .txt был изменен : {}'.format(file_time.strftime("%d-%m-%Y AT %H:%M")))
+        print(Fore.YELLOW, 'Лог был изменен : {}'.format(file_time.strftime("%d-%m-%Y AT %H:%M")))
         print(Fore.WHITE, '------------------------------------------------------------------------')
 
     except Exception as error:
@@ -256,18 +284,16 @@ def check_date_logs_txt(path):
 
 
 def check_logs_backup(buffer1, buffer2):
-    path = r'RPTKBackup\RPTKARH\log.txt'
-    path_a = r'RPTKBackup\RPTKARH\loga.txt'
-    path_b = r'RPTKBackup\RPTKARH\logb.txt'
-
-    oth_logs = [r'\\10.3.4.10\RPTKBackup\RPTKARH\log.txt',
-                r'\\10.2.41.1\RPTKBackup\RPTKARH\log_ama.txt',
-                r'\\10.2.41.1\RPTKBackup\RPTKARH\log_amb.txt']
+    oth_logs = [
+        r'\\10.3.4.10\RPTKBackup\RPTKARH\log.txt',
+        r'\\10.2.41.1\RPTKBackup\RPTKARH\log_ama.txt',
+        r'\\10.2.41.1\RPTKBackup\RPTKARH\log_amb.txt'
+        ]
                 
     for i in buffer1:
         try:
             path_ = r'\\{}'.format(i)
-            file = os.path.join(path_, path)
+            file = os.path.join(path_, profiles['path_log'])
             file_size = os.stat(file).st_size
             if file_size > 0:
                 print(Fore.RED, 'В логе бэкапа есть ошибки на : {}'.format(file))
@@ -278,13 +304,14 @@ def check_logs_backup(buffer1, buffer2):
                 check_date_logs_txt(file)
         except Exception as error:
             print(Fore.RED, error)
+            print('')
 
     for i in buffer2:
         try:
             path_ = r'\\{}'.format(i)
-            file_a = os.path.join(path_, path_a)
+            file_a = os.path.join(path_, profiles['path_alog'])
             file_size_a = os.stat(file_a).st_size
-            file_b = os.path.join(path_, path_b)
+            file_b = os.path.join(path_, profiles['path_blog'])
             file_size_b = os.stat(file_b).st_size
             if file_size_a > 0:
                 print(Fore.RED, 'В логе бэкапа есть ошибки на : {}'.format(file_a))
@@ -301,6 +328,7 @@ def check_logs_backup(buffer1, buffer2):
                 check_date_logs_txt(file_b)
         except Exception as error:
             print(Fore.RED, error)
+            print('')
 
     for i in oth_logs:
         try:
@@ -313,14 +341,14 @@ def check_logs_backup(buffer1, buffer2):
                 print(Fore.GREEN, 'В логе бэкапа ошибок нет на : {}'.format(i))
                 check_date_logs_txt(i)
         except Exception as error:
-            print(Fore.RED, error)        
+            print(Fore.RED, error)
+            print('')        
 
 
 def check_data_backup(ip):
-    path = r'RPTKBackup\RPTKARH'
     try:
         path_ = r'\\{}'.format(ip)
-        path__ = os.path.join(path_, path)
+        path__ = os.path.join(path_, profiles['path_bckp'])
         dir_list = [os.path.join(path__, x) for x in os.listdir(path__) if x != 'log.txt' and x != 'loga.txt' and x != 'logb.txt']
         if dir_list:
             date_list = [[x, os.path.getmtime(x)] for x in dir_list]
@@ -346,35 +374,34 @@ def start():
             elif command == 'logs':
                 wp = input('Выбрать место server/router # ')
                 if wp == 'server':
-                    check_logs_backup(g.servers_buffer, g.servers_alfamed)
+                    check_logs_backup(g.names['servers_buffer'], g.names['servers_alfamed'])
                 if wp == 'router':
-                    check_logs_backup(g.routers_buffer, g.routers_alfamed)
+                    check_logs_backup(g.names['routers_buffer'], g.names['routers_alfamed'])
             elif command == 'backup':
                 pool = Pool(g.pool_size)
                 wp = input('Выбрать место server/router # ')
                 if wp == 'server':
-                    servers_ip = g.servers_buffer + g.servers_alfamed
+                    servers_ip = g.names['servers_buffer'] + g.names['servers_alfamed']
                     for i in servers_ip:
                         pool.apply_async(check_data_backup, (i, ))
                     pool.close()
                     pool.join()
                 if wp == 'router':
-                    routers_ip = g.routers_buffer + g.routers_alfamed
+                    routers_ip = g.names['routers_buffer'] + g.names['routers_alfamed']
                     for i in routers_ip:
                         pool.apply_async(check_data_backup, (i, ))
-                    print('Ждите завершения пула потоков ... ')
                     pool.close()
                     pool.join()
             elif command == 'date':
                 wp = input('Выбрать место server/router # ')
                 if wp == 'server':
-                    check_date_rptk(g.servers_buffer, g.servers_alfamed)
+                    check_date_rptk(g.names['servers_buffer'], g.names['servers_alfamed'])
                 if wp == 'router':
-                    check_date_rptk(g.routers_buffer, g.routers_alfamed)
+                    check_date_rptk(g.names['routers_buffer'], g.names['routers_alfamed'])
             elif command == 'repl':
                 print('')
-                servers_ip = g.servers_buffer + g.servers_alfamed
-                servers_db = g.database_servers + g. database_alfamed
+                servers_ip = g.names['servers_buffer'] + g.names['servers_alfamed']
+                servers_db = g.names['database_servers'] + g.names['database_alfamed']
                 repl_list = [run for run in zip(servers_db, servers_ip)]
                 start_check_replication(repl_list)
             elif command == 'copyf':
@@ -386,25 +413,25 @@ def start():
                 file_path = input('Директория копируемого файла # '); file_name = input('Имя файла # '); dist_path = input(r'Директория назначения без первого слэша например: Scripts\bat # ')
                 if wp == 'server':
                     g.gen_ip_list(start, end)
-                    for i in g.servers_buffer:
+                    for i in g.names['servers_buffer']:
                         pool.apply_async(copy_file, (file_path, file_name, dist_path, i, ))
                     pool.close()
                     pool.join()
                 if wp == 'router':
                     g.gen_ip_list(start, end)
-                    for i in g.routers_buffer:
+                    for i in g.names['routers_buffer']:
                         pool.apply_async(copy_file, (file_path, file_name, dist_path, i,))
                     pool.close()
                     pool.join()
                 if wp == 'server_alf':
                     g.gen_alf_ip_list(start, end)
-                    for i in g.servers_alfamed:
+                    for i in g.names['servers_alfamed']:
                         pool.apply_async(copy_file, (file_path, file_name, dist_path, i,))
                     pool.close()
                     pool.join()
                 if wp == 'router_alf':
                     g.gen_alf_ip_list(start, end)
-                    for i in g.routers_alfamed:
+                    for i in g.names['routers_alfamed']:
                         pool.apply_async(copy_file, (file_path, file_name, dist_path, i,))
                     pool.close()
                     pool.join()
@@ -415,15 +442,15 @@ def start():
                         if i != '' and i != ' ':
                             ip_s = '192.168.{}.51'.format(i)
                             ip_r = '192.168.{}.50'.format(i)
-                            g.servers_buffer.append(ip_s)
-                            g.routers_buffer.append(ip_r)
+                            g.names['servers_buffer'].append(ip_s)
+                            g.names['routers_buffer'].append(ip_r)
                     if int(wh) == 1:
-                        for s in g.servers_buffer:
+                        for s in g.names['servers_buffer']:
                             pool.apply_async(copy_file, (file_path, file_name, dist_path, s, ))
                         pool.close()
                         pool.join()
                     elif int(wh) == 0:
-                        for r in g.routers_buffer:
+                        for r in g.names['routers_buffer']:
                             pool.apply_async(copy_file, (file_path, file_name, dist_path, r, ))
                         pool.close()
                         pool.join()
@@ -436,25 +463,25 @@ def start():
                 file_path = input('Директория копирования # '); dist_path = input(r'Директория назначения : Scripts\RPTK_release, если директория не существует, она будет создана # ')
                 if wp == 'server':
                     g.gen_ip_list(start, end)
-                    for i in g.servers_buffer:
+                    for i in g.names['servers_buffer']:
                         pool.apply_async(copy_folder, (file_path, dist_path, i, ))
                     pool.close()
                     pool.join()
                 if wp == 'router':
                     g.gen_ip_list(start, end)
-                    for i in g.routers_buffer:
+                    for i in g.names['routers_buffer']:
                         pool.apply_async(copy_folder, (file_path, dist_path, i, ))
                     pool.close()
                     pool.join()
                 if wp == 'server_alf':
                     g.gen_alf_ip_list(start, end)
-                    for i in g.servers_alfamed:
+                    for i in g.names['servers_alfamed']:
                         pool.apply_async(copy_folder, (file_path, dist_path, i, ))
                     pool.close()
                     pool.join()
                 if wp == 'router_alf':
                     g.gen_alf_ip_list(start, end)
-                    for i in g.routers_alfamed:
+                    for i in g.names['routers_alfamed']:
                         pool.apply_async(copy_folder, (file_path, dist_path, i, ))
                     pool.close()
                     pool.join()
@@ -465,15 +492,15 @@ def start():
                         if i != '' and i != ' ':
                             ip_s = '192.168.{}.51'.format(i)
                             ip_r = '192.168.{}.50'.format(i)
-                            g.servers_buffer.append(ip_s)
-                            g.routers_buffer.append(ip_r)
+                            g.names['servers_buffer'].append(ip_s)
+                            g.names['routers_buffer'].append(ip_r)
                     if int(wh) == 1:
-                        for i in g.servers_buffer:
+                        for i in g.names['servers_buffer']:
                             pool.apply_async(copy_folder, (file_path, dist_path, i, ))
                         pool.close()
                         pool.join()
                     elif int(wh) == 0:
-                        for i in g.routers_buffer:
+                        for i in g.names['routers_buffer']:
                             pool.apply_async(copy_folder, (file_path, dist_path, i, ))
                         pool.close()
                         pool.join()
