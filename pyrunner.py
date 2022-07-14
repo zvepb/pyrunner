@@ -1,34 +1,47 @@
 # zv
+# Pyrunner 1.0.1
 import os
 import time
 import shutil
 import datetime as dt
+from datetime import datetime
 from distutils.dir_util import copy_tree
 from multiprocessing.pool import ThreadPool as Pool
+from multiprocessing import Lock
 
 import psycopg2
-from colorama import init, Fore, Style
+from colorama import init, Fore, Style, Back
+
+from libfptr10 import IFptr
 
 
-intro = ['',
-         '██████╗░██╗░░░██╗██████╗░██╗░░░██╗███╗░░██╗███╗░░██╗███████╗██████╗░',
-         '██╔══██╗╚██╗░██╔╝██╔══██╗██║░░░██║████╗░██║████╗░██║██╔════╝██╔══██╗',
-         '██████╔╝░╚████╔╝░██████╔╝██║░░░██║██╔██╗██║██╔██╗██║█████╗░░██████╔╝',
-         '██╔═══╝░░░╚██╔╝░░██╔══██╗██║░░░██║██║╚████║██║╚████║██╔══╝░░██╔══██╗',
-         '██║░░░░░░░░██║░░░██║░░██║╚██████╔╝██║░╚███║██║░╚███║███████╗██║░░██║',
-         '╚═╝░░░░░░░░╚═╝░░░╚═╝░░╚═╝░╚═════╝░╚═╝░░╚══╝╚═╝░░╚══╝╚══════╝╚═╝░░╚═╝',
-         '',
-         '--------------------------------------------------------------------',
-         '',
+intro = ['                                                                            ',
+         '   ####################################################################     ',
+         '                                                                            ',
+         '   ██████╗░██╗░░░██╗██████╗░██╗░░░██╗███╗░░██╗███╗░░██╗███████╗██████╗░     ',
+         '   ██╔══██╗╚██╗░██╔╝██╔══██╗██║░░░██║████╗░██║████╗░██║██╔════╝██╔══██╗     ',
+         '   ██████╔╝░╚████╔╝░██████╔╝██║░░░██║██╔██╗██║██╔██╗██║█████╗░░██████╔╝     ',
+         '   ██╔═══╝░░░╚██╔╝░░██╔══██╗██║░░░██║██║╚████║██║╚████║██╔══╝░░██╔══██╗     ',
+         '   ██║░░░░░░░░██║░░░██║░░██║╚██████╔╝██║░╚███║██║░╚███║███████╗██║░░██║     ',
+         '   ╚═╝░░░░░░░░╚═╝░░░╚═╝░░╚═╝░╚═════╝░╚═╝░░╚══╝╚═╝░░╚══╝╚══════╝╚═╝░░╚═╝     ',
+         '                                                                            ',
+         '   ####################################################################     ',
+         '                                                                            ',
+         '   ###########   Памятка для Администраторов РПТК   ###################     ',
+         '                                                                            ',
+         '   ###########  Утром запусти : logs, backup, repl   ##################     ',
+         '                                                                            '
          ]
 
 help_outro = '\n[+]\n\ncopyf - Копировать файл по диапазону аптек/альфамедов\n'\
              'copyd - Копировать папку по диапазону аптек/альфамедов\n'\
-             'logs - Проверить размер и дату изменения файла лога бэкапа .txt\n'\
+             'logs - Проверить ошибки лога бэкапа и дату изменения\n'\
              'backup - Проверить дату последнего бэкапа\n'\
-             'date - Проверить дату релиза РПТК\n'\
-             'repl - Проверить состояние выполнения репликации'
-
+             'date - Проверить дату релиза РПТК (только сервер/роутер)\n'\
+             'repl - Проверить состояние выполнения репликации\n'\
+             'atol - Проверить инфо на кассах (непереданные чеки, дата ОКП)\n'\
+             'ddir - Очистить папку по диапазону аптек/альфамедов\n'\
+             'dfile - Удалить файл по диапазону аптек/альфамедов\n'\
 
 profiles = {
     'path_exe': r'RPTK\Apteka_Main.exe',
@@ -51,19 +64,21 @@ SQL_QUERY_REPL = """SELECT
         FROM pg_stat_replication;"""
 
 
+flag_error = False
+flag_color = False
+
+none_time = datetime(1970, 1, 1, 0)
+today_date = datetime.now().date()
+
 init()
 
-
+# BEGIN CLASS
 class Generator:
     """
 Класс генеатора создает ip адреса и database имена для аптек/альфамедов по диапазону,
-если диапазон не указан создаются все адреса и имена по умолчанию аптеки(1-80) альфамеды(101-110)
+если диапазон не указан создаются все адреса и имена по умолчанию конечная точка: self.last_server и self.last_alf
     """
     def __init__(self):
-        self.first_server = 1; self.last_server = 80
-        self.first_alfamed = 101; self.last_alfamed = 110; self.pool_size = 10
-        self.servers_buffer = []; self.routers_buffer = []; self.servers_alfamed = []
-        self.routers_alfamed = []; self.database_servers = []; self.database_alfamed = []
         self.names = {
             'servers_buffer': [],
             'routers_buffer': [],
@@ -71,99 +86,97 @@ class Generator:
             'routers_alfamed': [],
             'database_servers': [],
             'database_alfamed': [],
-            }
-        self.closed_alfameds = {107}; self.closed_servers = {57, 65, 66, 71, 76}; bad_conn = {5, 46, 59, 74}
-
-    def gen_ip_list(self, start=None, end=None):
+            'atol_buffer': [],
+            'other': [],
+        }
+        self.pool_size = 13
+        self.first_server = 1
+        self.last_server = 80
+        self.first_alf = 1
+        self.last_alf = 10
+        self.closed = (10, 57, 65, 66, 71, 74, 76, )
+        self.closed_alf = (2, 7, )
+        self.second_atol = (2, 4, 9, 12, 13, 42, 59, )
+        self.third_atol = (30, )
+        #self.bad_conn = (5, 46, 59, 74, )
+    # генератор адресов аптек
+    def generator_apteka(self, start=None, end=None):
         if not start or not end:
-            self.gen_ip_list(self.first_server, self.last_server)
+            self.generator_apteka(self.first_server, self.last_server)
         else:
             if start < self.first_server:
-                raise ValueError('The pharmacy number is not in the range 1-80')
+                raise ValueError('The pharmacy number is not in the range apteka')
             elif end > self.last_server:
-                raise ValueError('The pharmacy number is not in the range 1-80')
+                raise ValueError('The pharmacy number is not in the range apteka')
             else:
-                for i in range(start, end+1):
-                    if i not in self.closed_servers:
-                        server_ip = '192.168.{}.51'.format(i)
-                        router_ip = '192.168.{}.50'.format(i)
-                        self.names['servers_buffer'].append(server_ip)
-                        self.names['routers_buffer'].append(router_ip)
-
-    def gen_alf_ip_list(self, start=None, end=None):
+                self.names['servers_buffer'] = ['192.168.{}.51'.format(i) for i in range(start, end+1) if i not in self.closed] + ['10.3.4.10', '10.2.41.1']
+                self.names['routers_buffer'] = ['192.168.{}.50'.format(i) for i in range(start, end+1) if i not in self.closed]
+    # генератор адресов альфамедов
+    def generator_alfamed(self, start=None, end=None):
         if not start or not end:
-            self.gen_alf_ip_list(self.first_alfamed, self.last_alfamed)
+            self.generator_alfamed(self.first_alf, self.last_alf)
         else:
-            if start < self.first_alfamed:
-                raise ValueError('The pharmacy number is not in the range 101-110')
-            elif end > self.last_alfamed:
-                raise ValueError('The pharmacy number is not in the range 101-110')
+            if start < self.first_alf:
+                raise ValueError('The pharmacy number is not in the range alfamed')
+            elif end > self.last_alf:
+                raise ValueError('The pharmacy number is not in the range alfamed')
             else:
-                for i in range(start, end+1):
-                    if i not in self.closed_alfameds:
-                        if i == 102:
-                            server_ip = '10.2.2.2'
-                            router_ip = '10.2.2.1'
-                            self.names['servers_alfamed'].append(server_ip)
-                            self.names['routers_alfamed'].append(router_ip)
-                        else:
-                            server_ip = '192.168.{}.51'.format(i)
-                            router_ip = '192.168.{}.50'.format(i)
-                            self.names['servers_alfamed'].append(server_ip)
-                            self.names['routers_alfamed'].append(router_ip)
-
-    def gen_db_name(self, start=None, end=None):
+                self.names['servers_alfamed'] = ['192.168.10{}.51'.format(i) for i in range(start, 10) if i not in self.closed_alf] + \
+                          ['192.168.1{}.51'.format(i) for i in range(10, end+1) if i not in self.closed_alf] + ['10.2.2.2']
+                self.names['routers_alfamed'] = ['192.168.10{}.50'.format(i) for i in range(start, 10) if i not in self.closed_alf] + \
+                          ['192.168.1{}.50'.format(i) for i in range(10, end+1) if i not in self.closed_alf] + ['10.2.2.1']
+    # генератор имен баз данных аптек
+    def generator_dbapteka(self, start=None, end=None):
         if not start or not end:
-            self.gen_db_name(self.first_server, self.last_server)
+            self.generator_dbapteka(self.first_server, self.last_server)
         else:
             if start < self.first_server:
-                raise ValueError('The pharmacy number is not in the range 1-80')
+                raise ValueError('The pharmacy number is not in the range apteka')
             elif end > self.last_server:
-                raise ValueError('The pharmacy number is not in the range 1-80')
+                raise ValueError('The pharmacy number is not in the range apteka')
             else:
-                for i in range(start, end+1):
-                    if i not in self.closed_servers:
-                        if i < 10:
-                            db_name = 'A0{}'.format(i)
-                            self.database_servers.append(db_name)
-                            self.names['database_servers'].append(db_name)
-                        else:
-                            db_name = 'A{}'.format(i)
-                            self.names['database_servers'].append(db_name)
-
-    def gen_alf_db_name(self, start=None, end=None):
+                self.names['database_servers'] = ['A0{}'.format(i) for i in range(start, 10)] + ['A{}'.format(i) for i in range(10, end+1) if i not in self.closed] + ['AIA', 'AMA']
+    # генератор имен баз данных альфамедов
+    def generator_dbalfamed(self, start=None, end=None):
         if not start or not end:
-            self.gen_alf_db_name(self.first_alfamed, self.last_alfamed)
+            self.generator_dbalfamed(self.first_alf, self.last_alf)
         else:
-            if start < self.first_alfamed:
-                raise ValueError('The pharmacy number is not in the range 101-110')
-            elif end > self.last_alfamed:
-                raise ValueError('The pharmacy number is not in the range 101-110')
+            if start < self.first_alf:
+                raise ValueError('The pharmacy number is not in the range alfamed')
+            elif end > self.last_alf:
+                raise ValueError('The pharmacy number is not in the range alfamed')
             else:
-                for i in range(start, end+1):
-                    if i not in self.closed_alfameds:
-                        if i < 110:
-                            db_name = 'M0{}a'.format(str(i)[2:3])
-                            self.names['database_alfamed'].append(db_name)
-                        else:
-                            db_name = 'M{}a'.format(str(i)[1:3])
-                            self.names['database_alfamed'].append(db_name)
+                self.names['database_alfamed'] = ['M0{}a'.format(i) for i in range(start, 10) if i not in self.closed_alf] + \
+                          ['M{}a'.format(i) for i in range(10, end+1) if i not in self.closed_alf] + ['M02a']
+    # генератор адресов касс
+    def generator_kassa(self):
+            self.names['atol_buffer'] = ['192.168.{}.155'.format(i) for i in range(self.first_server, self.last_server+1) if i not in self.closed] + \
+                                                     ['192.168.10{}.155'.format(i) for i in range(self.first_alf, 10) if i not in self.closed_alf] + \
+                                                     ['192.168.1{}.155'.format(i) for i in range(10, self.last_alf+1) if i not in self.closed_alf] + \
+                                                     ['192.168.{}.156'.format(i) for i in self.second_atol] + ['192.168.{}.157'.format(i) for i in self.third_atol]
+    # генератор адресов через пробелы
+    def generator_random(self, ip_string, server_apt, server_alf, router_apt, router_alf):
+        if server_apt:
+            g.names['other'] = ['192.168.{}.51'.format(i) for i in ip_string.split(' ') if i != '' and i != ' ']
+        elif server_alf:
+            g.names['other'] = ['192.168.10{}.51'.format(i) for i in ip_string.split(' ') if  i != '' and i != ' ' and int(i) < 10] + \
+                                                    ['192.168.1{}.51'.format(i) for i in ip_string.split(' ') if i != '' and i != ' ' and int(i) >= 10]
+        elif router_apt:
+            g.names['other'] = ['192.168.{}.50'.format(i) for i in ip_string.split(' ') if i != '' and i != ' ']
+        elif router_alf:
+            g.names['other'] = ['192.168.10{}.50'.format(i) for i in ip_string.split(' ') if  i != '' and i != ' ' and int(i) < 10] + \
+                                        ['192.168.1{}.50'.format(i) for i in ip_string.split(' ') if i != '' and i != ' ' and int(i) >= 10]
 
-    def generate_all(self):
-        self.gen_ip_list(), self.gen_alf_ip_list(), self.gen_db_name(), self.gen_alf_db_name()
+    def generator_everything(self):
+        self.generator_apteka(), self.generator_alfamed(), self.generator_dbapteka(), self.generator_dbalfamed(), self.generator_kassa()
 
-    def clear_buffers(self):
-        self.names['servers_buffer'].clear()
-        self.names['routers_buffer'].clear()
-        self.names['servers_alfamed'].clear()
-        self.names['routers_alfamed'].clear()
-        self.names['database_servers'].clear()
-        self.names['database_alfamed'].clear()
-
+    def clear_buffer(self):
+        self.names.clear()
+# END CLASS
 
 def print_intro():
     for i in intro:
-        print(Fore.YELLOW, i)
+        print(Back.CYAN, Fore.BLACK, i)
 
 
 def create_connection(db_name, db_host):
@@ -180,31 +193,31 @@ def create_connection(db_name, db_host):
         print(Fore.RED, error)
     return connection
 
-
+# NO USE def print_result()
 def execute_query_repl(connection, db_name):
     try:
         cursor = connection.cursor()
         cursor.execute(SQL_QUERY_REPL)
         result = cursor.fetchall()
         if not result:
-            print(Fore.RED, db_name + ' репликация остановлена')
+            print(Fore.RED, db_name + ' репликация не выполняется')
         for i in result:
-            print(Fore.GREEN, 'Слейв ' + i[0] + ' в статусе ' + i[3] + ' pending = ' + str(i[5]) + ' write = ' + str(i[6]) + ' flush = ' + str(i[7]) + ' replay = ' + str(i[8]) + ' total_lag = ' + str(i[9]))
+            print(Fore.GREEN, 'Слейв ' + i[0] + ' в статусе ' + i[3] + ' на {}'.format(db_name) + \
+                ' pending = ' + str(i[5]) + ' write = ' + str(i[6]) + ' flush = ' + str(i[7]) + ' replay = ' + str(i[8]) + ' total_lag = ' + str(i[9]))
     except Exception as error:
         print(Fore.RED, error)
 
 
 def start_check_replication(buffer1):
-    print( 'pending - сколько журналов транзакций сгенерировано на мастере но не отправлено на реплику (проблема - сеть)\n'\
-           'write - сколько реплики отправлено но не записано (проблема бывает редко - возможно диски)\n'\
-           'flush - записано но еще не была выполнена команда fsync (то есть синхронизации с диском еще не было, данные могут быть записаны только в оперативную память) (проблема - диски не успевают записывать и проигрывать данные)\n'\
-           'replay - данные сброшены на реплику и выполнен fsync но еще не воспроизведены репликой (см. flush)\n'\
-           'total_lag - общий суммарный лаг\n'
-        )
+    print( 'https://habr.com/ru/company/oleg-bunin/blog/414111/ - источник\n'
+           'pending - сколько журналов транзакций сгенерировано на мастере но не отправлено на реплику: проблема - сеть\n'
+           'write - сколько реплики отправлено но не записано: проблема бывает редко - возможно диски\n'
+           'flush - записано но еще не была выполнена команда fsync: проблема - диски не успевают записывать и проигрывать данные\n'
+           'replay - данные сброшены на реплику и выполнен fsync но еще не воспроизведены репликой (см. flush)\n'
+           'total_lag - общий суммарный лаг\n')
     for i in buffer1:
         connection = create_connection(i[0], i[1])
         execute_query_repl(connection, i[0])
-    print('\nВыполнено')
 
 
 def copy_file(file_path, file_name, dist_path, ip):
@@ -215,17 +228,21 @@ def copy_file(file_path, file_name, dist_path, ip):
         if os.path.exists(distination_path):
             distination_path_ = os.path.join(distination_path, file_name)
             shutil.copy2(file_path, distination_path_)
-            print(Fore.GREEN, 'Копирование завершено успешно {}'.format(ip))
-            time.sleep(0.1)
+            res = 'Копирование завершено успешно {}'.format(ip)
+            lines = '-------------------------------------------'
+            print_result(res, lines)
         else:
             os.mkdir(distination_path)
             distination_path_ = os.path.join(distination_path, file_name)
             shutil.copy2(file_path, distination_path_)
-            print(Fore.GREEN, 'Была создана новая директория и копирование завершено успешно {}'.format(ip))
-            time.sleep(0.1)
-            #print(Fore.RED, 'Distination directory not defined')
+            res = 'Была создана новая директория и копирование завершено успешно {}'.format(ip)
+            lines = '-------------------------------------------'
+            print_result(res, lines)
     except Exception as error:
-        print(Fore.RED, error)
+        flag_error = True
+        res = error
+        lines = '-------------------------------------------'
+        print_result(res, lines, flag=flag_error, flag_=False)
 
 
 def copy_folder(dir_path, dist_path, ip):
@@ -233,30 +250,72 @@ def copy_folder(dir_path, dist_path, ip):
         path_ = r'\\{}'.format(ip)
         distination_path = os.path.join(path_, dist_path)
         copy_tree(dir_path, distination_path)
-        print(Fore.GREEN, 'Копирование завершено успешно на {}'.format(ip))
-        time.sleep(0.1)
+        res = 'Копирование завершено успешно {}'.format(ip)
+        lines = '----------------------------------------------'
+        print_result(res, lines)
     except Exception as error:
-        print(Fore.RED, error)
+        flag_error = True
+        res = error
+        lines = '----------------------------------------------'
+        print_result(res, lines, flag=flag_error, flag_=False)
 
 
+def delete_file(dist_path, file_name, ip):
+    try:
+        path_ = r'\\{}'.format(ip)
+        distination_path = os.path.join(path_, dist_path)
+        if os.path.exists(distination_path):
+            os.remove(os.path.join(distination_path, file_name))
+            res = 'Файл на {} с именем {} - удален'.format(ip, file_name)
+            lines = '-----------------------------------------------'
+            print_result(res, lines)
+    except Exception as error:
+        flag_error = True
+        res = error
+        lines = '-----------------------------------------------'
+        print_result(res, lines, flag=flag_error, flag_=False)
+
+
+def delete_all_in_folder(dist_path, ip, stop_name=None):
+    try:
+        path_ = r'\\{}'.format(ip)
+        distination_path = os.path.join(path_, dist_path)
+        for dirpath, dirnames, filenames in os.walk(distination_path):
+            for dirname in dirnames:
+                shutil.rmtree(os.path.join(dirpath, dirname))
+            for filename in filenames:
+                if filename == stop_name:
+                    pass
+                else:
+                    os.remove(os.path.join(dirpath, filename))
+        res = 'Директория {} очищена'.format(distination_path)
+        lines = '-----------------------------------------------'
+        print_result(res, lines)
+    except Exception as error:
+        flag_error = True
+        res = error
+        lines = '-----------------------------------------------'
+        print_result(res, lines, flag=flag_error, flag_=False)
+
+# NO USE def print_result()
 def check_date_rptk(buffer1, buffer2):
     for i in buffer1:
         try:
             path_ = r'\\{}'.format(i)
             path__ = os.path.join(path_, profiles['path_exe'])
             buf = dt.datetime.fromtimestamp(os.path.getmtime(path__))
-            print(Fore.YELLOW, 'На {} последний релиз РПТК :'.format(i), buf.strftime("%d-%m-%Y AT %H:%M"))
+            print(Fore.GREEN, 'На {} последний релиз РПТК :'.format(path__), buf.strftime("%d-%m-%Y AT %H:%M"))
         except Exception as error:           
             print(Fore.RED, error)
     for i in buffer2:
         try:
             path_ = r'\\{}'.format(i)
-            path_a = os.path.join(path_, profiles['path_exea'])
-            path_b = os.path.join(path_, profiles['path_exeb'])
-            buf_1 = dt.datetime.fromtimestamp(os.path.getmtime(profiles['path_exea']))
-            print(Fore.YELLOW, 'На {} последний релиз РПТК :'.format(i), buf_1.strftime("%d-%m-%Y AT %H:%M"))
-            buf_2 = dt.datetime.fromtimestamp(os.path.getmtime(profiles['path_exeb']))
-            print(Fore.YELLOW, 'На {} последний релиз РПТК :'.format(i), buf_2.strftime("%d-%m-%Y AT %H:%M"))
+            path_a = os.path.join(path_, profiles['path_aexe'])
+            path_b = os.path.join(path_, profiles['path_bexe'])
+            buf_1 = dt.datetime.fromtimestamp(os.path.getmtime(path_a))
+            print(Fore.GREEN, 'На {} последний релиз РПТК :'.format(path_a), buf_1.strftime("%d-%m-%Y AT %H:%M"))
+            buf_2 = dt.datetime.fromtimestamp(os.path.getmtime(path_b))
+            print(Fore.GREEN, 'На {} последний релиз РПТК :'.format(path_b), buf_2.strftime("%d-%m-%Y AT %H:%M"))
         except Exception as error:           
             print(Fore.RED, error)
 
@@ -271,24 +330,24 @@ def read_logs(file, coding=None):
     except UnicodeDecodeError:
         read_logs(file, coding='utf-8')
 
-
+# no use def print_result()
 def check_date_logs_txt(path):
     try:
         file_time = dt.datetime.fromtimestamp(os.path.getmtime(path))
-        print(Fore.YELLOW, 'Лог был изменен : {}'.format(file_time.strftime("%d-%m-%Y AT %H:%M")))
-        print(Fore.WHITE, '------------------------------------------------------------------------')
+        if str(file_time.strftime("%Y-%m-%d")) != str(today_date):
+            print(Fore.RED, 'Лог был изменен давно : {}'.format(file_time.strftime("%d-%m-%Y AT %H:%M")))
+            print(Fore.WHITE, '------------------------------------------------------------------------')
+        else:
+            #print(Fore.WHITE, 'Лог был изменен : {}'.format(file_time.strftime("%d-%m-%Y AT %H:%M")))
+            print(Fore.WHITE, '------------------------------------------------------------------------')
 
     except Exception as error:
         print(Fore.RED, error)
         print(Fore.WHITE, '------------------------------------------------------------------------')
 
-
+# NO USE def print_result()
 def check_logs_backup(buffer1, buffer2):
-    oth_logs = [
-        r'\\10.3.4.10\RPTKBackup\RPTKARH\log.txt',
-        r'\\10.2.41.1\RPTKBackup\RPTKARH\log_ama.txt',
-        r'\\10.2.41.1\RPTKBackup\RPTKARH\log_amb.txt'
-        ]
+    oth_logs = [r'\\10.3.4.10\RPTKBackup\RPTKARH\log.txt', r'\\10.2.41.1\RPTKBackup\RPTKARH\log_ama.txt', r'\\10.2.41.1\RPTKBackup\RPTKARH\log_amb.txt' ]
                 
     for i in buffer1:
         try:
@@ -304,7 +363,7 @@ def check_logs_backup(buffer1, buffer2):
                 check_date_logs_txt(file)
         except Exception as error:
             print(Fore.RED, error)
-            print('')
+            print(Fore.WHITE, '------------------------------------------------------------------------')
 
     for i in buffer2:
         try:
@@ -328,7 +387,6 @@ def check_logs_backup(buffer1, buffer2):
                 check_date_logs_txt(file_b)
         except Exception as error:
             print(Fore.RED, error)
-            print('')
 
     for i in oth_logs:
         try:
@@ -341,8 +399,7 @@ def check_logs_backup(buffer1, buffer2):
                 print(Fore.GREEN, 'В логе бэкапа ошибок нет на : {}'.format(i))
                 check_date_logs_txt(i)
         except Exception as error:
-            print(Fore.RED, error)
-            print('')        
+            print(Fore.RED, error)     
 
 
 def check_data_backup(ip):
@@ -350,27 +407,146 @@ def check_data_backup(ip):
         path_ = r'\\{}'.format(ip)
         path__ = os.path.join(path_, profiles['path_bckp'])
         dir_list = [os.path.join(path__, x) for x in os.listdir(path__) if x != 'log.txt' and x != 'loga.txt' and x != 'logb.txt']
+
         if dir_list:
             date_list = [[x, os.path.getmtime(x)] for x in dir_list]
             sort_date_list = sorted(date_list, key=lambda x: x[1], reverse=True)
             last_backup = sort_date_list[0][0]
             name_last_backup = os.path.basename(last_backup)
             time_file = dt.datetime.fromtimestamp(os.path.getmtime(last_backup))
-            print(Fore.CYAN, ip + " Последний бэкап был : %s" % time_file.strftime('%Y-%m-%d AT %H:%M'))
-            time.sleep(0.2)
+            if str(time_file.strftime('%Y-%m-%d')) != str(today_date):
+                flag_error = True
+                res = ip + " Последний бэкап был : %s" % time_file.strftime('%Y-%m-%d AT %H:%M')
+                lines = '--------------------------------------------------------'
+                print_result(res, lines, flag_error)
+            else:
+                res = ip + " Последний бэкап был : %s" % time_file.strftime('%Y-%m-%d AT %H:%M')
+                lines = '--------------------------------------------------------'
+                print_result(res, lines)
+
     except Exception as error:
-        print(Fore.RED, error)
+        flag_error = True
+        res = error
+        lines = '--------------------------------------------------------'
+        print_result(res, lines, flag=flag_error, flag_=False)
 
 
+def atol_check(ip, all_output):
+    DRIVER_PATH = os.path.join(os.getcwd(), 'fptr10.dll')
+    fptr = IFptr(DRIVER_PATH)
+
+    IP = ip
+    PORT = '5555'
+    SOCKET_KKM = '{}:{}'.format(IP, PORT)
+
+    fptr.setSingleSetting(IFptr.LIBFPTR_SETTING_MODEL, str(IFptr.LIBFPTR_MODEL_ATOL_AUTO))
+    fptr.setSingleSetting(IFptr.LIBFPTR_SETTING_PORT, str(IFptr.LIBFPTR_PORT_TCPIP))
+    fptr.setSingleSetting(IFptr.LIBFPTR_SETTING_IPADDRESS, IP)
+    fptr.setSingleSetting(IFptr.LIBFPTR_SETTING_IPPORT, PORT)
+    fptr.applySingleSettings()
+
+    try:
+        fptr.open()
+        isOpened = fptr.isOpened()
+        if isOpened == 0:
+            flag_error = True
+            res = 'Нет удалось подключиться к {}'.format(SOCKET_KKM)
+            lines = '---------------------------------------------------------------------------------------------------------------------------------------------------'
+            print_result(res, lines, flag_error)
+            write_resul(res, lines)
+        else:
+
+            fptr.setParam(IFptr.LIBFPTR_PARAM_DATA_TYPE, IFptr.LIBFPTR_DT_STATUS)
+            fptr.queryData()
+
+            NUMBER_KKT = fptr.getParamString(IFptr.LIBFPTR_PARAM_SERIAL_NUMBER)
+            # STATUS_STATE = fptr.getParamInt(IFptr.LIBFPTR_PARAM_SHIFT_STATE)
+            KKM_TIME = fptr.getParamDateTime(IFptr.LIBFPTR_PARAM_DATE_TIME)
+
+            # Обмен с ОФН
+            fptr.setParam(IFptr.LIBFPTR_PARAM_FN_DATA_TYPE, IFptr.LIBFPTR_FNDT_OFD_EXCHANGE_STATUS)
+            fptr.fnQueryData()
+
+            NOT_TRANS_DOC = fptr.getParamInt(IFptr.LIBFPTR_PARAM_DOCUMENTS_COUNT)
+            DATA_LAST_TRANS = fptr.getParamDateTime(IFptr.LIBFPTR_PARAM_DATE_TIME)
+            DATA_FN_KEY = fptr.getParamDateTime(IFptr.LIBFPTR_PARAM_LAST_SUCCESSFUL_OKP)
+
+            # if STATUS_STATE == 0:
+            # STATUS_STATE_STR = 'Закрыта'
+            # elif STATUS_STATE == 1:
+            # STATUS_STATE_STR = 'Открыта'
+            # elif STATUS_STATE == 2:
+            # STATUS_STATE_STR = 'Истекла'
+
+            if int(NOT_TRANS_DOC) > 0:
+                flag_color = True
+                if DATA_FN_KEY == none_time:
+                    res = '{}; ККТ №: {}; Дата/время: {}; Непереданные чеки: {}; Первый непереданный: {};'.format(SOCKET_KKM, NUMBER_KKT, KKM_TIME, NOT_TRANS_DOC, DATA_LAST_TRANS)
+                    lines = '--------------------------------------------------------------------------------------------------------------------------------------------------'
+                    print_result(res, lines, flag=False, flag_=flag_color)
+                    write_resul(res, lines)
+                else:
+                    res = '{}; ККМ №: {}; Дата/Время: {}; Непереданные чеки: {}; Первый непереданный: {}; Дата/время последнего ОКП: {};'.format(
+                        SOCKET_KKM, NUMBER_KKT, KKM_TIME, NOT_TRANS_DOC, DATA_LAST_TRANS, DATA_FN_KEY)
+                    lines = '--------------------------------------------------------------------------------------------------------------------------------------------------'
+                    print_result(res, lines, flag=False, flag_=flag_color)
+                    write_resul(res, lines)
+            else:
+                if all_output:
+                    if DATA_FN_KEY == none_time:
+                        res = '{}; ККТ №: {}; Дата/время: {}; Непереданные чеки: {};'.format(SOCKET_KKM, NUMBER_KKT, KKM_TIME, NOT_TRANS_DOC)
+                        lines = '--------------------------------------------------------------------------------------------------------------------------------------------------'
+                        print_result(res, lines)
+                        write_resul(res, lines)
+                    else:
+                        res = '{}; ККМ №: {}; Дата/Время: {}; Непереданные чеки: {}; Дата/время последнего ОКП: {};'.format(
+                            SOCKET_KKM, NUMBER_KKT, KKM_TIME, NOT_TRANS_DOC, DATA_FN_KEY)
+                        lines = '--------------------------------------------------------------------------------------------------------------------------------------------------'
+                        print_result(res, lines)
+                        write_resul(res, lines)
+            # debugger
+            # print(fptr.errorDescription())
+            fptr.close()
+
+    except Exception as error:
+        flag_error = True
+        res = error
+        lines = '--------------------------------------------------------------------------------------------------------------------------------------------------'
+        print(res, lines, flag=flag_error, flag_=False)
+        fptr.close()
+
+
+def write_resul(result, lines):
+    with open('log_atol.csv', 'a') as f:
+        f.write(result + '\n')
+        f.write(lines + '\n')
+    f.close()
+
+
+def print_result(result, lines, flag=None, flag_=None):
+    with lock:
+        if flag:
+            print(Fore.RED, result)
+            print(Fore.WHITE, lines)
+        elif flag_:
+            print(Fore.CYAN, result)
+            print(Fore.WHITE, lines)
+        else:
+            print(Fore.GREEN, result)
+            print(Fore.WHITE, lines)
+
+# MAIN METHOD
 def start():
     try:
         while True:
-            g.clear_buffers()
-            g.generate_all()
+            flag_error = False
+            flag_color = False
+            g.clear_buffer()
+            g.generator_everything()
             print(Style.RESET_ALL)
-            command = input('\n\nInput help or input command copyf/copyd/logs/backup/date/repl # ')
+            command = input('\n\nПомощь - help или команда: copyf/copyd/logs/backup/date/repl/atol/ddir/dfile # ')
             if command == 'help':
-                print(Fore.GREEN, help_outro)
+                print(Fore.CYAN, help_outro)
             elif command == 'logs':
                 wp = input('Выбрать место server/router # ')
                 if wp == 'server':
@@ -389,7 +565,7 @@ def start():
                 if wp == 'router':
                     routers_ip = g.names['routers_buffer'] + g.names['routers_alfamed']
                     for i in routers_ip:
-                        pool.apply_async(check_data_backup, (i, ))
+                        res = pool.apply_async(check_data_backup, (i, ))
                     pool.close()
                     pool.join()
             elif command == 'date':
@@ -404,113 +580,239 @@ def start():
                 servers_db = g.names['database_servers'] + g.names['database_alfamed']
                 repl_list = [run for run in zip(servers_db, servers_ip)]
                 start_check_replication(repl_list)
+            elif command == 'atol':
+                f = open('log_atol.csv', 'w')
+                f.close()
+                all_output = False
+                inp_otp = input('Вывести по всем кассам - 1, только по непереданным - 0 # ')
+                if int(inp_otp) == 1:
+                    all_output = True
+                pool = Pool(g.pool_size)
+                for i in g.names['atol_buffer']:
+                    pool.apply_async(atol_check, (i, all_output, ))
+                pool.close()
+                pool.join()
             elif command == 'copyf':
-                g.clear_buffers()
+                g.clear_buffer()
                 pool = Pool(g.pool_size)
                 wp = input('Выбрать место server/router/server_alf/router_alf/range # ')
-                start = int(input('Введите начало диапазона : аптека(1-80)/альфамед(101-110) или введите 0 если используете range # '))
-                end = int(input('Введите конец диапазона : аптека(1-80)/альфамед(101-110) или введите 0 если используете range # '))
-                file_path = input('Директория копируемого файла # '); file_name = input('Имя файла # '); dist_path = input(r'Директория назначения без первого слэша например: Scripts\bat # ')
+                start = int(input('Введите начало диапазона : аптека(1-80)/альфамед(1-10) или введите 0 если используете range # '))
+                end = int(input('Введите конец диапазона : аптека(1-80)/альфамед(1-10) или введите 0 если используете range # '))
+                file_path = input('Директория копируемого файла # ')
+                file_name = input('Имя копируемого файла # ')
+                dist_path = input(r'Директория назначения без первого слэша например: Scripts\bat # ')
                 if wp == 'server':
-                    g.gen_ip_list(start, end)
+                    g.generator_apteka(start, end)
                     for i in g.names['servers_buffer']:
                         pool.apply_async(copy_file, (file_path, file_name, dist_path, i, ))
                     pool.close()
                     pool.join()
                 if wp == 'router':
-                    g.gen_ip_list(start, end)
+                    g.generator_apteka(start, end)
                     for i in g.names['routers_buffer']:
                         pool.apply_async(copy_file, (file_path, file_name, dist_path, i,))
                     pool.close()
                     pool.join()
                 if wp == 'server_alf':
-                    g.gen_alf_ip_list(start, end)
+                    g.generator_alfamed(start, end)
                     for i in g.names['servers_alfamed']:
                         pool.apply_async(copy_file, (file_path, file_name, dist_path, i,))
                     pool.close()
                     pool.join()
                 if wp == 'router_alf':
-                    g.gen_alf_ip_list(start, end)
+                    g.generator_alfamed(start, end)
                     for i in g.names['routers_alfamed']:
                         pool.apply_async(copy_file, (file_path, file_name, dist_path, i,))
                     pool.close()
                     pool.join()
                 if wp == 'range':
-                    rg = input('Указать аптеки/альфамеды через пробел # ')
+                    aptoralf = input('Ввести 1, если аптека и 0 если альфамед # ')
                     wh = input('Ввести 1, если сервер и 0 если роутер # ')
-                    for i in rg.split(' '):
-                        if i != '' and i != ' ':
-                            ip_s = '192.168.{}.51'.format(i)
-                            ip_r = '192.168.{}.50'.format(i)
-                            g.names['servers_buffer'].append(ip_s)
-                            g.names['routers_buffer'].append(ip_r)
+                    rg = input('Указать аптеки/альфамеды через пробел # ')
                     if int(wh) == 1:
-                        for s in g.names['servers_buffer']:
-                            pool.apply_async(copy_file, (file_path, file_name, dist_path, s, ))
+                        if int(aptoralf) == 1:
+                            g.generator_random(rg, server_apt=True, server_alf=False, router_apt=False, router_alf=False)
+                        elif int(aptoralf) == 0:
+                            g.generator_random(rg, server_apt=False, server_alf=True, router_apt=False, router_alf=False)
+                        for i in g.names['other']:
+                            pool.apply_async(copy_file, (file_path, file_name, dist_path, i, ))
                         pool.close()
                         pool.join()
                     elif int(wh) == 0:
-                        for r in g.names['routers_buffer']:
-                            pool.apply_async(copy_file, (file_path, file_name, dist_path, r, ))
+                        if int(aptoralf) == 1:
+                            g.generator_random(rg, server_apt=False, server_alf=False, router_apt=True, router_alf=False)
+                        elif int(aptoralf) == 0:
+                            g.generator_random(rg, server_apt=False, server_alf=False, router_apt=False, router_alf=True)
+                        for i in g.names['other']:
+                            pool.apply_async(copy_file, (file_path, file_name, dist_path, i, ))
                         pool.close()
                         pool.join()
             elif command == 'copyd':
-                g.clear_buffers()
+                g.clear_buffer()
                 pool = Pool(g.pool_size)
                 wp = input('Выбрать место server/router/server_alf/router_alf/range # ')
-                start = int(input('Введите начало диапазона : аптека(1-80)/альфамед(101-110) или введите 0 если используете range # '))
-                end = int(input('Введите конец диапазона : аптека(1-80)/альфамед(101-110) или введите 0 если используете range # '))
-                file_path = input('Директория копирования # '); dist_path = input(r'Директория назначения : Scripts\RPTK_release, если директория не существует, она будет создана # ')
+                start = int(input('Введите начало диапазона : аптека(1-80)/альфамед(1-10) или введите 0 если используете range # '))
+                end = int(input('Введите конец диапазона : аптека(1-80)/альфамед(1-10) или введите 0 если используете range # '))
+                file_path = input('Директория копирования # ')
+                dist_path = input(r'Директория назначения : Scripts\RPTK_release, если директория не существует, она будет создана # ')
                 if wp == 'server':
-                    g.gen_ip_list(start, end)
+                    g.generator_apteka(start, end)
                     for i in g.names['servers_buffer']:
                         pool.apply_async(copy_folder, (file_path, dist_path, i, ))
                     pool.close()
                     pool.join()
                 if wp == 'router':
-                    g.gen_ip_list(start, end)
+                    g.generator_apteka(start, end)
                     for i in g.names['routers_buffer']:
                         pool.apply_async(copy_folder, (file_path, dist_path, i, ))
                     pool.close()
                     pool.join()
                 if wp == 'server_alf':
-                    g.gen_alf_ip_list(start, end)
+                    g.generator_alfamed(start, end)
                     for i in g.names['servers_alfamed']:
                         pool.apply_async(copy_folder, (file_path, dist_path, i, ))
                     pool.close()
                     pool.join()
                 if wp == 'router_alf':
-                    g.gen_alf_ip_list(start, end)
+                    g.generator_alfamed(start, end)
                     for i in g.names['routers_alfamed']:
                         pool.apply_async(copy_folder, (file_path, dist_path, i, ))
                     pool.close()
                     pool.join()
                 if wp == 'range':
-                    rg = input('Указать аптеки/альфамеды через пробел # ')
+                    aptoralf = input('Ввести 1, если аптека и 0 если альфамед # ')
                     wh = input('Ввести 1, если сервер и 0 если роутер # ')
-                    for i in rg.split(' '):
-                        if i != '' and i != ' ':
-                            ip_s = '192.168.{}.51'.format(i)
-                            ip_r = '192.168.{}.50'.format(i)
-                            g.names['servers_buffer'].append(ip_s)
-                            g.names['routers_buffer'].append(ip_r)
+                    rg = input('Указать аптеки/альфамеды через пробел # ')
                     if int(wh) == 1:
-                        for i in g.names['servers_buffer']:
+                        if int(aptoralf) == 1:
+                            g.generator_random(rg, server_apt=True, server_alf=False, router_apt=False, router_alf=False)
+                        elif int(aptoralf) == 0:
+                            g.generator_random(rg, server_apt=False, server_alf=True, router_apt=False, router_alf=False)
+                        for i in g.names['other']:
                             pool.apply_async(copy_folder, (file_path, dist_path, i, ))
                         pool.close()
                         pool.join()
                     elif int(wh) == 0:
-                        for i in g.names['routers_buffer']:
+                        if int(aptoralf) == 1:
+                            g.generator_random(rg, server_apt=False, server_alf=False, router_apt=True, router_alf=False)
+                        elif int(aptoralf) == 0:
+                            g.generator_random(rg, server_apt=False, server_alf=False, router_apt=False, router_alf=True)
+                        for i in g.names['other']:
                             pool.apply_async(copy_folder, (file_path, dist_path, i, ))
                         pool.close()
                         pool.join()
-            #elif command == 'pgagent':
-                #start_check_pgagent()
+            elif command == 'dfile':
+                g.clear_buffer()
+                pool = Pool(g.pool_size)
+                wp = input('Выбрать место server/router/server_alf/router_alf/range # ')
+                start = int(input('Введите начало диапазона : аптека(1-80)/альфамед(101-110) или введите 0 если используете range # '))
+                end = int(input('Введите конец диапазона : аптека(1-80)/альфамед(101-110) или введите 0 если используете range # '))
+                dist_path = input('Директория удаляемого файла # ')
+                file_name = input('Имя удаляемого файла # ')
+                if wp == 'server':
+                    g.generator_apteka(start, end)
+                    for i in g.names['servers_buffer']:
+                        pool.apply_async(delete_file, (dist_path, file_name, i, ))
+                    pool.close()
+                    pool.join()
+                if wp == 'router':
+                    g.generator_apteka(start, end)
+                    for i in g.names['routers_buffer']:
+                        pool.apply_async(delete_file, (dist_path, file_name, i, ))
+                    pool.close()
+                    pool.join()
+                if wp == 'server_alf':
+                    g.generator_alfamed(start, end)
+                    for i in g.names['servers_alfamed']:
+                        pool.apply_async(delete_file, (dist_path, file_name, i, ))
+                    pool.close()
+                    pool.join()
+                if wp == 'router_alf':
+                    g.generator_alfamed(start, end)
+                    for i in g.names['routers_alfamed']:
+                        pool.apply_async(delete_file, (dist_path, file_name, i, ))
+                    pool.close()
+                    pool.join()
+                if wp == 'range':
+                    aptoralf = input('Ввести 1, если аптека и 0 если альфамед # ')
+                    wh = input('Ввести 1, если сервер и 0 если роутер # ')
+                    rg = input('Указать аптеки/альфамеды через пробел # ')
+                    if int(wh) == 1:
+                        if int(aptoralf) == 1:
+                            g.generator_random(rg, server_apt=True, server_alf=False, router_apt=False, router_alf=False)
+                        elif int(aptoralf) == 0:
+                            g.generator_random(rg, server_apt=False, server_alf=True, router_apt=False, router_alf=False)
+                        for i in g.names['other']:
+                            pool.apply_async(delete_file, (dist_path, file_name, i, ))
+                        pool.close()
+                        pool.join()
+                    elif int(wh) == 0:
+                        if int(aptoralf) == 1:
+                            g.generator_random(rg, server_apt=False, server_alf=False, router_apt=True, router_alf=False)
+                        elif int(aptoralf) == 0:
+                            g.generator_random(rg, server_apt=False, server_alf=False, router_apt=False, router_alf=True)
+                        for i in g.names['other']:
+                            pool.apply_async(delete_file, (dist_path, file_name, i, ))
+                        pool.close()
+                        pool.join()
+            elif command == 'ddir':
+                g.clear_buffer()
+                pool = Pool(g.pool_size)
+                wp = input('Выбрать место server/router/server_alf/router_alf/range # ')
+                start = int(input('Введите начало диапазона : аптека(1-80)/альфамед(101-110) или введите 0 если используете range # '))
+                end = int(input('Введите конец диапазона : аптека(1-80)/альфамед(101-110) или введите 0 если используете range # '))
+                dist_path = input(r'Директория которую надо очистить : Scripts\auto # ')
+                if wp == 'server':
+                    g.generator_apteka(start, end)
+                    for i in g.names['servers_buffer']:
+                        pool.apply_async(delete_all_in_folder, (dist_path, i, ))
+                    pool.close()
+                    pool.join()
+                if wp == 'router':
+                    g.generator_apteka(start, end)
+                    for i in g.names['routers_buffer']:
+                        pool.apply_async(delete_all_in_folder, (dist_path, i, ))
+                    pool.close()
+                    pool.join()
+                if wp == 'server_alf':
+                    g.generator_alfamed(start, end)
+                    for i in g.names['servers_alfamed']:
+                        pool.apply_async(delete_all_in_folder, (dist_path, i, ))
+                    pool.close()
+                    pool.join()
+                if wp == 'router_alf':
+                    g.generator_alfamed(start, end)
+                    for i in g.names['routers_alfamed']:
+                        pool.apply_async(delete_all_in_folder, (dist_path, i, ))
+                    pool.close()
+                    pool.join()
+                if wp == 'range':
+                    aptoralf = input('Ввести 1, если аптека и 0 если альфамед # ')
+                    wh = input('Ввести 1, если сервер и 0 если роутер # ')
+                    rg = input('Указать аптеки/альфамеды через пробел # ')
+                    if int(wh) == 1:
+                        if int(aptoralf) == 1:
+                            g.generator_random(rg, server_apt=True, server_alf=False, router_apt=False, router_alf=False)
+                        elif int(aptoralf) == 0:
+                            g.generator_random(rg, server_apt=False, server_alf=True, router_apt=False, router_alf=False)
+                        for i in g.names['other']:
+                            pool.apply_async(delete_all_in_folder, (dist_path, i, ))
+                        pool.close()
+                        pool.join()
+                    elif int(wh) == 0:
+                        if int(aptoralf) == 1:
+                            g.generator_random(rg, server_apt=False, server_alf=False, router_apt=True, router_alf=False)
+                        elif int(aptoralf) == 0:
+                            g.generator_random(rg, server_apt=False, server_alf=False, router_apt=False, router_alf=True)
+                        for i in g.names['other']:
+                            pool.apply_async(delete_all_in_folder, (dist_path, i, ))
+                        pool.close()
+                        pool.join()
             else:
                 print(Fore.RED, 'Команда не найдена')
     except KeyboardInterrupt:
         print('\n')
-        print(Fore.CYAN, 'Выход из программы ...')
+        print(Fore.CYAN, 'Успешный выход !')
         exit()
     except Exception as error:
         print(Fore.RED, error)
@@ -518,5 +820,6 @@ def start():
 
 if __name__ == '__main__':
     g = Generator()
+    lock = Lock()
     print_intro()
     start()
